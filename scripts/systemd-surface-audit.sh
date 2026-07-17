@@ -52,6 +52,33 @@ systemctl is-active systemd-userdbd.socket 2>&1
 echo "Módulo 'systemd' referenciado no NSS (se aparecer abaixo, está em uso interno -- não mascarar):"
 grep systemd /etc/nsswitch.conf 2>&1
 
+section "Verificação cruzada: mascarado no systemd == realmente fora do kernel?"
+echo "systemctl pode dizer 'masked' e a unit ainda ter deixado um socket vivo (foi o"
+echo "que aconteceu com machined nesta auditoria: mask sem --now não parou o que já"
+echo "estava ativo). A prova real é o que o kernel mostra em 'ss', não o que o"
+echo "systemd reporta sobre si mesmo. Cruza os dois pra cada unit da família:"
+echo
+for u in systemd-machined.socket systemd-importd.socket systemd-sysext.socket \
+         systemd-storage-block.socket systemd-storage-fs.socket sshd-unix-local.socket; do
+    state=$(systemctl show "$u" -p ActiveState --value 2>/dev/null)
+    path=$(systemctl cat "$u" 2>/dev/null | grep -i '^ListenStream=' | tail -1 | cut -d= -f2-)
+    live="não encontrado em ss"
+    if [ -n "$path" ] && sudo ss -pl 2>/dev/null | grep -qF "$path"; then
+        live="AINDA ESCUTANDO no kernel"
+    fi
+    printf '%-32s systemctl=%-10s kernel(ss)=%s\n' "$u" "$state" "$live"
+done
+echo
+echo "Se 'systemctl' disser inactive/masked mas 'kernel(ss)' disser 'AINDA ESCUTANDO',"
+echo "o mask não pegou de verdade -- rode: sudo systemctl mask --now <unit>"
+echo
+echo "Nota sobre falsos positivos ao ler 'ss' manualmente: sockets de apps de sessão"
+echo "(ex.: terminal, navegador, barra de status) também aparecem em 'ss -pl' e são"
+echo "normais -- eles pertencem ao SEU usuário (uid 1000) e ficam sob /run/user/1000/"
+echo "ou em namespace abstrato ('@...'). O que importa auditar é especificamente os"
+echo "sockets de sistema (donos root, sob /run/systemd/, /run/dbus/) que aparecem em"
+echo "'systemctl list-sockets' -- não qualquer socket unix que qualquer app abrir."
+
 section "Fim"
 echo "Para qualquer item marcado 'candidato a mask' sem uso comprovado:"
 echo "  sudo systemctl mask --now <unit>"

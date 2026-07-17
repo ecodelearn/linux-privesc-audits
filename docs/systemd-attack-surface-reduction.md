@@ -63,6 +63,18 @@ Depois, sempre confirme o estado real, não só o `Loaded`:
 systemctl status <unit> --no-pager   # Active: deve estar "inactive (dead)"
 ```
 
+### Verificação cruzada com o kernel, não só com o systemd
+
+`systemctl` reporta o que o *próprio systemd* acha do estado da unit — o que já provou ser insuficiente uma vez nesta auditoria (mask sem `--now` deixou o socket vivo enquanto `Loaded: masked` sugeria segurança). A prova definitiva é o que o kernel realmente tem escutando, via `ss`:
+
+```sh
+sudo ss -pl | grep <caminho-do-socket>   # ex.: /run/systemd/machine/io.systemd.Machine
+```
+
+Vazio = realmente não está escutando. Se aparecer algo mesmo com a unit mascarada, o `mask` não pegou.
+
+**Cuidado ao ler `ss` manualmente**: sockets de aplicativos de sessão comuns (terminal, navegador, barra de status) também aparecem na saída — eles pertencem ao seu próprio usuário (uid do desktop) e vivem sob `/run/user/<uid>/` ou em namespace abstrato (`@...`). Isso é normal e não tem relação com daemons privilegiados. O que importa auditar são especificamente os sockets listados em `systemctl list-sockets` (sistema, dono root, sob `/run/systemd/` ou `/run/dbus/`) — não qualquer socket unix que qualquer processo abrir. `scripts/systemd-surface-audit.sh` automatiza esse cruzamento para as famílias já catalogadas.
+
 ## O que isso não resolve
 
 Mascarar o que não é usado reduz a superfície, mas não é uma defesa contra CVE em algo que você *precisa* manter ativo (ex.: `NetworkManager`, `polkit`, `dbus-broker`). Para esses, a defesa é a Frente 1 (`arch-audit` + atualização) combinada com hardening de unit (`systemd-analyze security <unit>`, ver [writeup principal](../CVE-2026-4105-systemd-machined/#hardening-geral-complementar)) — não existe "desligar" para o que é essencial ao desktop funcionar.
