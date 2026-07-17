@@ -52,6 +52,17 @@ systemctl is-active systemd-userdbd.socket 2>&1
 echo "Módulo 'systemd' referenciado no NSS (se aparecer abaixo, está em uso interno -- não mascarar):"
 grep systemd /etc/nsswitch.conf 2>&1
 
+section "As mesmas famílias existem duplicadas na instância --user (não é privesc, mas é superfície)"
+echo "A instância 'systemctl --user' roda seus próprios geradores e cria os mesmos"
+echo "sockets em paralelo sob /run/user/\$UID/systemd/... -- mascarar a versão de"
+echo "sistema NÃO mascara a versão --user. Diferença de risco: o processo do outro"
+echo "lado aqui roda como VOCÊ, não como root, e o diretório /run/user/\$UID é 0700"
+echo "(só o dono acessa) -- não é escalação de privilégio, mas ainda é superfície"
+echo "desnecessária que um processo malicioso já rodando como você poderia abusar."
+echo "Ver docs/systemd-attack-surface-reduction.md para a tabela completa de diferenças."
+echo
+systemctl --user list-sockets --no-pager --all 2>&1 | grep -iE "machined|importd|sysext|storage|ssh" || echo "(nenhuma das famílias rastreadas presente na instância --user)"
+
 section "Verificação cruzada: mascarado no systemd == realmente fora do kernel?"
 echo "systemctl pode dizer 'masked' e a unit ainda ter deixado um socket vivo (foi o"
 echo "que aconteceu com machined nesta auditoria: mask sem --now não parou o que já"
@@ -79,8 +90,25 @@ for u in systemd-machined.socket systemd-importd.socket systemd-sysext.socket \
     printf '%-32s systemctl=%-10s kernel(ss)=%s\n' "$u" "$state" "$live"
 done
 echo
+echo "-- mesma checagem para a instância --user --"
+for u in systemd-machined.socket systemd-importd.socket systemd-storage-fs.socket; do
+    state=$(systemctl --user show "$u" -p ActiveState --value 2>/dev/null)
+    path=$(systemctl --user cat "$u" 2>/dev/null | grep -i '^ListenStream=' | tail -1 | cut -d= -f2-)
+    if [ "$ss_status" -ne 0 ]; then
+        live="INDETERMINADO (ss falhou)"
+    elif [ -z "$path" ]; then
+        live="sem ListenStream= (não é socket de path, pular)"
+    elif printf '%s\n' "$ss_output" | grep -qF "$path"; then
+        live="AINDA ESCUTANDO no kernel"
+    else
+        live="não encontrado em ss"
+    fi
+    printf '%-32s systemctl--user=%-10s kernel(ss)=%s\n' "$u" "$state" "$live"
+done
+echo
 echo "Se 'systemctl' disser inactive/masked mas 'kernel(ss)' disser 'AINDA ESCUTANDO',"
 echo "o mask não pegou de verdade -- rode: sudo systemctl mask --now <unit>"
+echo "(ou, pra instância --user, sem sudo: systemctl --user mask --now <unit>)"
 echo
 echo "Nota sobre falsos positivos ao ler 'ss' manualmente: sockets de apps de sessão"
 echo "(ex.: terminal, navegador, barra de status) também aparecem em 'ss -pl' e são"

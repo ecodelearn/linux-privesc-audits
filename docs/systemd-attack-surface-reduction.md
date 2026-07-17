@@ -75,6 +75,29 @@ Vazio = realmente não está escutando. Se aparecer algo mesmo com a unit mascar
 
 **Cuidado ao ler `ss` manualmente**: sockets de aplicativos de sessão comuns (terminal, navegador, barra de status) também aparecem na saída — eles pertencem ao seu próprio usuário (uid do desktop) e vivem sob `/run/user/<uid>/` ou em namespace abstrato (`@...`). Isso é normal e não tem relação com daemons privilegiados. O que importa auditar são especificamente os sockets listados em `systemctl list-sockets` (sistema, dono root, sob `/run/systemd/` ou `/run/dbus/`) — não qualquer socket unix que qualquer processo abrir. `scripts/systemd-surface-audit.sh` automatiza esse cruzamento para as famílias já catalogadas.
 
+## A instância `--user` gera os mesmos sockets em paralelo — e isso muda o risco, não dobra ele
+
+Cada família de socket coberta acima (`machined`, `importd`, `sysext`, `storage providers`) também existe **duplicada dentro da sua própria instância `systemctl --user`**, sob `/run/user/<uid>/systemd/...`, independente da instância de sistema (`/run/systemd/...`). Mascarar a unit no manager de sistema **não** mascara a cópia da instância `--user` — são unit files e processos completamente separados. Confirmado nesta auditoria: depois de mascarar `systemd-importd.socket`/`systemd-storage-fs.socket`/`systemd-machined.socket` no sistema, os três continuavam escutando sob `/run/user/1000/systemd/...` até serem mascarados separadamente com `systemctl --user mask --now`.
+
+A pergunta natural é: isso é o mesmo risco de privilege escalation? **Não, estruturalmente não** — e vale entender por quê, porque é fácil confundir "roda com `--user`" com "é seguro" ou com "é exploração de privilégio", quando na prática são coisas diferentes dependendo de quem está do outro lado do socket:
+
+| | Instância de sistema (`/run/systemd/...`) | Instância `--user` (`/run/user/<uid>/systemd/...`) |
+|---|---|---|
+| Processo do outro lado do socket | root | o próprio usuário dono da sessão |
+| Isolamento do socket | `SocketMode=0666` — qualquer usuário local conecta | diretório `/run/user/<uid>` é `0700`; socket é `0600` — só o dono acessa |
+| O que um bug de lógica ali permite | escalar de usuário sem privilégio pra **root** | fazer, no máximo, algo que você **já pode fazer como você mesmo** |
+| Por isso é... | escalação de privilégio real (é o caso do CVE-2026-4105) | superfície desnecessária, mas não cruza fronteira de privilégio |
+
+Ainda vale mascarar a versão `--user` do que não é usado — reduz o que um processo malicioso já rodando como você (ex.: uma extensão de navegador comprometida, um pacote AUR malicioso) conseguiria abusar dentro da sua própria sessão. Mas não é a mesma urgência que a versão de sistema, e tratar as duas como equivalentes leva a alarme desproporcional.
+
+```sh
+systemctl --user mask --now systemd-importd.socket systemd-importd.service \
+                             systemd-storage-fs.socket \
+                             systemd-machined.socket systemd-machined.service
+```
+
+Não precisa de `sudo` — é a sua própria instância de usuário.
+
 ## O que isso não resolve
 
 Mascarar o que não é usado reduz a superfície, mas não é uma defesa contra CVE em algo que você *precisa* manter ativo (ex.: `NetworkManager`, `polkit`, `dbus-broker`). Para esses, a defesa é a Frente 1 (`arch-audit` + atualização) combinada com hardening de unit (`systemd-analyze security <unit>`, ver [writeup principal](../CVE-2026-4105-systemd-machined/#hardening-geral-complementar)) — não existe "desligar" para o que é essencial ao desktop funcionar.
