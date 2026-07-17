@@ -26,6 +26,12 @@ Veja também:
 - [`scripts/systemd-surface-audit.sh`](./scripts/systemd-surface-audit.sh) — script de auditoria read-only que implementa essa metodologia.
 - [`scripts/systemd-surface-audit.service` / `.timer`](./scripts/) — units `systemctl --user` prontas pra agendar o script acima rodando toda semana, sem precisar de cron nem de sudo. Ver seção "Agendamento" em [`docs/systemd-attack-surface-reduction.md`](./docs/systemd-attack-surface-reduction.md).
 
+## Outras auditorias
+
+Além de CVEs específicas, o repo também guarda auditorias de configuração pontuais — checar se algo que já estava instalado (firewall, controle de saída por aplicação) está de fato configurado e funcionando como deveria, não só presente:
+
+- [`audits/2026-07-17-firewall-opensnitch-netguard/`](./audits/2026-07-17-firewall-opensnitch-netguard/) — UFW, opensnitch (achado: rodava com `DefaultAction: allow`, sem enforcement real) e um incidente real de crash-loop por limite de capacidade de mapa BPF ao carregar uma lista de bloqueio grande demais.
+
 ## Estudos de arquitetura
 
 Além das auditorias de CVE, o repo também guarda estudos de design de ferramentas de segurança relevantes — não são vulnerabilidades, são dissecações de "como fazer certo":
