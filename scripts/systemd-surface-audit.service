@@ -1,0 +1,6 @@
+[Unit]
+Description=Auditoria semanal de superfície de ataque systemd (linux-privesc-audits)
+
+[Service]
+Type=oneshot
+ExecStart=%h/projects/linux-privesc-audits/scripts/systemd-surface-audit.sh

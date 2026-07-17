@@ -68,10 +68,10 @@ systemctl status <unit> --no-pager   # Active: deve estar "inactive (dead)"
 `systemctl` reporta o que o *próprio systemd* acha do estado da unit — o que já provou ser insuficiente uma vez nesta auditoria (mask sem `--now` deixou o socket vivo enquanto `Loaded: masked` sugeria segurança). A prova definitiva é o que o kernel realmente tem escutando, via `ss`:
 
 ```sh
-sudo ss -pl | grep <caminho-do-socket>   # ex.: /run/systemd/machine/io.systemd.Machine
+ss -l | grep <caminho-do-socket>   # ex.: /run/systemd/machine/io.systemd.Machine
 ```
 
-Vazio = realmente não está escutando. Se aparecer algo mesmo com a unit mascarada, o `mask` não pegou.
+Vazio = realmente não está escutando. Se aparecer algo mesmo com a unit mascarada, o `mask` não pegou. **Não precisa de `sudo`** — sockets AF_UNIX em listen aparecem pro usuário comum; o script já usou `sudo ss -pl` numa versão anterior e isso causou um falso negativo silencioso (sudo sem TTY falha, `2>/dev/null` escondeu o erro, todo mundo apareceu como "não encontrado" mesmo escutando).
 
 **Cuidado ao ler `ss` manualmente**: sockets de aplicativos de sessão comuns (terminal, navegador, barra de status) também aparecem na saída — eles pertencem ao seu próprio usuário (uid do desktop) e vivem sob `/run/user/<uid>/` ou em namespace abstrato (`@...`). Isso é normal e não tem relação com daemons privilegiados. O que importa auditar são especificamente os sockets listados em `systemctl list-sockets` (sistema, dono root, sob `/run/systemd/` ou `/run/dbus/`) — não qualquer socket unix que qualquer processo abrir. `scripts/systemd-surface-audit.sh` automatiza esse cruzamento para as famílias já catalogadas.
 
@@ -97,6 +97,29 @@ systemctl --user mask --now systemd-importd.socket systemd-importd.service \
 ```
 
 Não precisa de `sudo` — é a sua própria instância de usuário.
+
+## Agendamento: rodando `scripts/systemd-surface-audit.sh` toda semana
+
+O script inteiro roda sem `sudo` (as duas frentes — `arch-audit` e a checagem de sockets, incluindo o cross-check com `ss` — não precisam de root), então dá pra agendar como unit `systemctl --user`, sem depender de `cron`/`cronie` (nem instalado por padrão nesta metodologia — o agendamento nativo do systemd já cobre isso).
+
+`scripts/systemd-surface-audit.service` e `scripts/systemd-surface-audit.timer` já estão prontos no repo. Pra ativar:
+
+```sh
+mkdir -p ~/.config/systemd/user
+ln -sf "$(pwd)/scripts/systemd-surface-audit.service" ~/.config/systemd/user/
+ln -sf "$(pwd)/scripts/systemd-surface-audit.timer" ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now systemd-surface-audit.timer
+```
+
+Usar symlink (em vez de copiar) mantém as units versionadas no repo como fonte de verdade — editar o arquivo aqui já reflete no agendamento real (depois de `systemctl --user daemon-reload` + `restart` na timer). `OnCalendar=Mon *-*-* 11:00:00` roda toda segunda às 11h — evitamos o padrão `weekly` (meia-noite de segunda) de propósito: isso é desktop pessoal que se desliga, não servidor sempre ligado, e meia-noite quase garante a máquina apagada nesse horário. `Persistent=true` cobre o resto: se a máquina estiver desligada na hora agendada, roda assim que ligar de novo.
+
+Não existe alerta automático — o resultado fica só no journal do usuário (`journalctl --user -u systemd-surface-audit.service`, já coberto pela política de retenção do journald existente no sistema). Ver os achados ainda depende de checar manualmente; isso é intencional para este repositório (nenhuma integração com serviço externo), não uma limitação a resolver.
+
+```sh
+journalctl --user -u systemd-surface-audit.service --since "-7 days"   # ver a última rodada
+systemctl --user list-timers systemd-surface-audit.timer               # confirmar próxima execução
+```
 
 ## O que isso não resolve
 

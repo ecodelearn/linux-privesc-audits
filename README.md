@@ -24,6 +24,7 @@ Veja também:
 - [`docs/init-system-alternatives.md`](./docs/init-system-alternatives.md) — avaliação de se trocar de init system (systemd → runit/dinit/OpenRC via Artix ou Void) reduz essa classe de risco. Resposta curta: não elimina, só muda de fornecedor, e o custo de migração costuma não compensar para uso pessoal de desktop.
 - [`docs/systemd-attack-surface-reduction.md`](./docs/systemd-attack-surface-reduction.md) — metodologia genérica e reutilizável (não amarrada a uma CVE) para mapear e reduzir a superfície de daemons IPC privilegiados ativados por padrão, incluindo CVEs conhecidas via `arch-audit`.
 - [`scripts/systemd-surface-audit.sh`](./scripts/systemd-surface-audit.sh) — script de auditoria read-only que implementa essa metodologia.
+- [`scripts/systemd-surface-audit.service` / `.timer`](./scripts/) — units `systemctl --user` prontas pra agendar o script acima rodando toda semana, sem precisar de cron nem de sudo. Ver seção "Agendamento" em [`docs/systemd-attack-surface-reduction.md`](./docs/systemd-attack-surface-reduction.md).
 
 ## Aviso
 
