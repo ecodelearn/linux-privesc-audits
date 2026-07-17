@@ -1,0 +1,68 @@
+# Reduzindo superfície de ataque de IPC privilegiado no systemd
+
+Metodologia genérica e reutilizável — não amarrada a uma CVE específica — para responder a pergunta que sempre volta depois de mitigar uma: *"e os outros daemons que eu nem sei que existem?"*
+
+Nasceu da auditoria de [CVE-2026-4105](../CVE-2026-4105-systemd-machined/), mas o padrão se repete: distros baseadas em Arch com systemd recente vêm com uma quantidade crescente de mini-daemons **ativados por socket, ligados por padrão**, para funcionalidades opcionais (VMs, containers, extensões de sistema, imagens portáteis, SSH local sem rede). A maioria nunca é usada por um desktop pessoal comum, mas continua escutando.
+
+## Duas frentes complementares, não uma só
+
+Uma auditoria de "estou vulnerável?" precisa cobrir dois eixos diferentes:
+
+1. **CVEs conhecidas em pacotes já instalados** — coberto por ferramenta automatizada (`arch-audit`), não por leitura manual de changelog.
+2. **Superfície ativa mas não usada** — coberto por inspeção de sockets/serviços, já que um daemon pode não ter CVE pública *hoje* e ainda assim ser risco desnecessário amanhã. A defesa aqui não é "esperar o CVE", é "desligar o que não se usa".
+
+## Frente 1 — CVEs em pacotes instalados: `arch-audit`
+
+```sh
+sudo pacman -S arch-audit
+arch-audit                 # lista pacotes instalados com CVE conhecida, por severidade
+arch-audit -u               # só os que têm update disponível corrigindo a CVE
+```
+
+Baseado nos dados do [Arch Security Tracker](https://security.archlinux.org/). Rode depois de cada `pacman -Syu`, ou via pacman hook (`/etc/pacman.d/hooks/`) para checar automaticamente depois de toda atualização — não precisa de timer/rede extra além do que já é usado pra atualizar o sistema.
+
+## Frente 2 — Superfície ativa sem uso: famílias conhecidas de "opt-in ligado por padrão"
+
+Não existe forma 100% automática de saber "esse daemon é usado ou não" — cada família tem seu próprio sinal de "está em uso de verdade". As famílias mais comuns encontradas em sistemas Arch/systemd recentes (261.x):
+
+| Família | Sockets/serviços | Sinal de uso real | Se não usa |
+|---|---|---|---|
+| VM/container registration | `systemd-machined.{socket,service}` | `machinectl list` retorna algo; `/run/systemd/machine/` tem entradas além dos arquivos base | `mask --now` |
+| Import/export de imagem | `systemd-importd.{socket,service}` | `/var/lib/machines/` tem imagens baixadas | `mask --now` |
+| System extensions | `systemd-sysext.{socket,service}` | `/etc/extensions/` ou `/var/lib/extensions/` existem e têm conteúdo | `mask --now` |
+| Storage/imagem de disco (varlink) | `systemd-storage-block.socket`, `systemd-storage-fs.socket` | Uso de `systemd-dissect`, `portablectl`, ou build de imagem de sistema | `mask --now` |
+| SSH local sem rede | `sshd-unix-local.socket` (gerado por `systemd-ssh-generator`, systemd ≥256) | Uso deliberado de VSOCK/AF_UNIX SSH pra acessar containers/VMs locais | `mask --now` |
+| NSS/identidade de usuário | `systemd-userdbd.socket` | **Quase sempre em uso** — checar `grep systemd /etc/nsswitch.conf`; se o módulo `systemd` estiver listado no `passwd:`/`group:`, é usado internamente (ex.: `DynamicUser=` em outras units) | **Não mascarar** sem entender o impacto — pode quebrar resolução de usuário/grupo |
+
+Comando genérico pra enumerar tudo que está de fato escutando agora (não só instalado/carregado):
+
+```sh
+systemctl list-sockets --no-pager
+```
+
+E pra ver o `SocketMode=` de cada um (0666/0777 = qualquer usuário local pode conectar — não é automaticamente perigoso, mas é o primeiro filtro pra priorizar o que investigar):
+
+```sh
+for u in $(systemctl list-sockets --no-pager --no-legend --all | awk '{print $2}' | sort -u); do
+  mode=$(systemctl cat "$u" 2>/dev/null | grep -i '^SocketMode=' | tail -1)
+  [ -n "$mode" ] && echo "$u: $mode"
+done
+```
+
+## Por que `mask --now` e não `mask` sozinho
+
+`systemctl mask` sozinho só impede início *futuro* — se a unit já estava ativa (comum em sockets, que sobem no boot), ela continua escutando até ser parada explicitamente. Isso já nos pegou uma vez nesta auditoria (ver [writeup da CVE-2026-4105](../CVE-2026-4105-systemd-machined/#mitigação)). `mask --now` faz stop+mask numa operação só — use sempre essa forma para daemons já ativos.
+
+```sh
+sudo systemctl mask --now <unit>
+```
+
+Depois, sempre confirme o estado real, não só o `Loaded`:
+
+```sh
+systemctl status <unit> --no-pager   # Active: deve estar "inactive (dead)"
+```
+
+## O que isso não resolve
+
+Mascarar o que não é usado reduz a superfície, mas não é uma defesa contra CVE em algo que você *precisa* manter ativo (ex.: `NetworkManager`, `polkit`, `dbus-broker`). Para esses, a defesa é a Frente 1 (`arch-audit` + atualização) combinada com hardening de unit (`systemd-analyze security <unit>`, ver [writeup principal](../CVE-2026-4105-systemd-machined/#hardening-geral-complementar)) — não existe "desligar" para o que é essencial ao desktop funcionar.
