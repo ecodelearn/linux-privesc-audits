@@ -58,13 +58,23 @@ echo "que aconteceu com machined nesta auditoria: mask sem --now não parou o qu
 echo "estava ativo). A prova real é o que o kernel mostra em 'ss', não o que o"
 echo "systemd reporta sobre si mesmo. Cruza os dois pra cada unit da família:"
 echo
+ss_output=$(ss -l 2>&1)
+ss_status=$?
+if [ "$ss_status" -ne 0 ]; then
+    echo "ERRO: 'ss -l' falhou (status $ss_status) -- resultado abaixo não é confiável."
+fi
 for u in systemd-machined.socket systemd-importd.socket systemd-sysext.socket \
          systemd-storage-block.socket systemd-storage-fs.socket sshd-unix-local.socket; do
     state=$(systemctl show "$u" -p ActiveState --value 2>/dev/null)
     path=$(systemctl cat "$u" 2>/dev/null | grep -i '^ListenStream=' | tail -1 | cut -d= -f2-)
-    live="não encontrado em ss"
-    if [ -n "$path" ] && sudo ss -pl 2>/dev/null | grep -qF "$path"; then
+    if [ "$ss_status" -ne 0 ]; then
+        live="INDETERMINADO (ss falhou)"
+    elif [ -z "$path" ]; then
+        live="sem ListenStream= (não é socket de path, pular)"
+    elif printf '%s\n' "$ss_output" | grep -qF "$path"; then
         live="AINDA ESCUTANDO no kernel"
+    else
+        live="não encontrado em ss"
     fi
     printf '%-32s systemctl=%-10s kernel(ss)=%s\n' "$u" "$state" "$live"
 done
