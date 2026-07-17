@@ -62,10 +62,24 @@ Sempre no mesmo bloco (linha ~1038 do arquivo = ~1026ª entrada de IP), a cada t
 
 **Lição pra qualquer ferramenta própria que carregue dado externo num mapa BPF**: capacidade de mapa costuma ser fixa em tempo de compilação (`max_entries`), e falhar ao atingir o limite pode significar **crash total do processo**, não degradação graciosa (ex.: logar e pular a entrada excedente). Antes de alimentar uma lista externa grande, teste o tamanho real que o mapa aguenta — não assuma que "mais dados" é sempre seguro só porque o formato do arquivo está correto.
 
+## Achado 5: UFW aceitava mDNS/SSDP de entrada por padrão do próprio template
+
+`/etc/ufw/before.rules` (e o equivalente IPv6, `before6.rules`) tem, por padrão do próprio UFW — não algo que o usuário adicionou — duas regras fixas que aceitam entrada multicast independente da política configurada:
+
+```
+-A ufw-before-input -p udp -d 224.0.0.251 --dport 5353 -j ACCEPT   # mDNS
+-A ufw-before-input -p udp -d 239.255.255.250 --dport 1900 -j ACCEPT  # SSDP/UPnP
+```
+
+Como `avahi-daemon` já está desabilitado nesta máquina, nada responde nessas portas hoje — mas a porta continuava aceita no firewall, dependendo só da ausência de um listener pra não ser descoberta. Comentadas as quatro linhas (IPv4 + IPv6) diretamente nos arquivos de template, `ufw reload` aplicado sem erro. Agora o bloqueio é explícito, não depende de "nada estar escutando".
+
+**Pitfall operacional (não de segurança) encontrado nesse passo**: colar um comando longo com `&&` encadeado no terminal do usuário pode ser quebrado em múltiplos comandos separados pelo soft-wrap da própria exibição, causando erros confusos (`cp: missing file operand`, tentativa de *executar* um path de arquivo como comando). Resolvido escrevendo um script e entregando só `bash /caminho/script.sh` — ver nota já registrada em memória do projeto sobre isso.
+
 ## Checklist reutilizável (pra próxima auditoria deste tipo)
 
 - [ ] `ufw status verbose` — política padrão certa, sem `ALLOW IN` inesperado
 - [ ] `journalctl -k --grep "UFW BLOCK"` — origem dos bloqueios é externa de verdade ou só ruído de LAN?
+- [ ] `grep -n "5353\|1900" /etc/ufw/before*.rules` — mDNS/SSDP comentados se não usa discovery de rede (são aceitos por padrão do próprio template do UFW, independente da política configurada)
 - [ ] `cat /etc/opensnitchd/default-config.json` — `DefaultAction` é `deny` (não `allow`)? `InterceptUnknown` é `true`?
 - [ ] `ls /etc/opensnitchd/rules/` — existem regras permanentes pras ferramentas de automação que rodam sem humano pra clicar em popup?
 - [ ] `cat /etc/opensnitchd/network_aliases.json` — existe, tem os IPs próprios conhecidos?
