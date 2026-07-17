@@ -1,0 +1,7 @@
+[Unit]
+Description=Checagem semanal de integridade de arquivo e rootkit (rkhunter)
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/rkhunter --update --nocolors
+ExecStart=/usr/bin/rkhunter --check --sk --nocolors

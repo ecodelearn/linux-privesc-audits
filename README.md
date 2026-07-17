@@ -26,6 +26,12 @@ Veja também:
 - [`scripts/systemd-surface-audit.sh`](./scripts/systemd-surface-audit.sh) — script de auditoria read-only que implementa essa metodologia.
 - [`scripts/systemd-surface-audit.service` / `.timer`](./scripts/) — units `systemctl --user` prontas pra agendar o script acima rodando toda semana, sem precisar de cron nem de sudo. Ver seção "Agendamento" em [`docs/systemd-attack-surface-reduction.md`](./docs/systemd-attack-surface-reduction.md).
 
+## Estudos de arquitetura
+
+Além das auditorias de CVE, o repo também guarda estudos de design de ferramentas de segurança relevantes — não são vulnerabilidades, são dissecações de "como fazer certo":
+
+- [`research/kubearmor-bpf-lsm/`](./research/kubearmor-bpf-lsm/) — leitura guiada do enforcement BPF-LSM real do [KubeArmor](https://github.com/kubearmor/kubearmor) (hooks usados, como evitam TOCTOU, CO-RE na prática, design de map-of-maps por container), com referências ao código-fonte exato lido.
+
 ## Aviso
 
 Este repositório é para fins educacionais e de hardening defensivo. Os exemplos foram generalizados a partir de auditorias reais, mas identificadores específicos de máquina (hostname, IP, etc.) foram removidos.
