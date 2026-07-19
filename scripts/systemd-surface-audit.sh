@@ -47,6 +47,33 @@ systemctl is-active sshd-unix-local.socket 2>&1
 echo "Gerado incondicionalmente a cada boot desde systemd 256, mesmo com sshd.service desabilitado."
 echo "Se você não usa SSH via AF_UNIX/AF_VSOCK para containers/VMs locais, é candidato a mask."
 
+section "Autostart de sessão (.desktop -> systemd --user, via uwsm/wayland-session-xdg-autostart) — em uso?"
+echo "Se a sessão gráfica usa uwsm (ou qualquer session manager que amarre"
+echo "xdg-desktop-autostart.target ao ciclo de vida da sessão), TODO .desktop em"
+echo "/etc/xdg/autostart e ~/.config/autostart vira 'systemctl --user' unit sozinho"
+echo "a cada login -- inclusive um .desktop malicioso plantado por algo que já"
+echo "rode como você, sem precisar de cron nem edição de .bashrc."
+systemctl --user is-enabled xdg-desktop-autostart.target 2>&1
+echo "Units geradas agora a partir de autostart (esperado: só o que você reconhece):"
+systemctl --user list-units 'app-*' --all --no-legend 2>/dev/null
+echo "Se não quer que NENHUM .desktop vire unit automaticamente (recomendado se"
+echo "você não depende de autostart de sessão pra nada crítico, ex.: gnome-keyring):"
+echo "  systemctl --user mask xdg-desktop-autostart.target"
+
+section "Portais de desktop (xdg-desktop-portal e afins) — flatpak/snap em uso?"
+if command -v flatpak >/dev/null 2>&1; then
+    echo "flatpak instalado -- xdg-document-portal provavelmente em uso de verdade, não mascarar sem checar."
+else
+    echo "flatpak não instalado -- xdg-document-portal.service é candidato certo a mask (é específico de sandbox Flatpak/Snap)."
+fi
+systemctl --user is-enabled xdg-document-portal.service xdg-desktop-portal.service \
+    xdg-desktop-portal-gtk.service xdg-desktop-portal-hyprland.service \
+    xdg-permission-store.service 2>&1
+echo "ATENÇÃO antes de mascarar o resto do stack (xdg-desktop-portal/-gtk/-hyprland/permission-store):"
+echo "checar 'Required By' de cada app instalado -- diálogo nativo de abrir/salvar"
+echo "arquivo em apps Electron/GTK sandboxed e compartilhamento de tela em chamada de"
+echo "vídeo no navegador dependem disso. Ex.: pacman -Qi xdg-desktop-portal | grep 'Required By'"
+
 section "NSS/identidade de usuário (userdbd) — NÃO mascarar sem checar isto primeiro"
 systemctl is-active systemd-userdbd.socket 2>&1
 echo "Módulo 'systemd' referenciado no NSS (se aparecer abaixo, está em uso interno -- não mascarar):"

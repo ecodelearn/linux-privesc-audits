@@ -4,6 +4,8 @@ Documentação detalhada de vulnerabilidades locais de escalação de privilégi
 
 O objetivo não é só "aplicar o patch e seguir" — é registrar *por que* o bug importa, *como* mitigar sem depender só de uma atualização de pacote, e *como auditar* uma máquina já em uso para confirmar que ela não foi alvo antes da correção.
 
+O conteúdo principal é em português, mas entradas mais recentes vêm ganhando uma versão em inglês (`README.en.md` na mesma pasta) pra facilitar reuso por outras comunidades — ver a partir de [`audits/2026-07-19-desktop-surface-review/`](./audits/2026-07-19-desktop-surface-review/).
+
 ## Índice
 
 | Data | CVE | Componente | Severidade | Status |
@@ -31,6 +33,7 @@ Veja também:
 Além de CVEs específicas, o repo também guarda auditorias de configuração pontuais — checar se algo que já estava instalado (firewall, controle de saída por aplicação) está de fato configurado e funcionando como deveria, não só presente:
 
 - [`audits/2026-07-17-firewall-opensnitch-netguard/`](./audits/2026-07-17-firewall-opensnitch-netguard/) — UFW, opensnitch (achado: rodava com `DefaultAction: allow`, sem enforcement real) e um incidente real de crash-loop por limite de capacidade de mapa BPF ao carregar uma lista de bloqueio grande demais.
+- [`audits/2026-07-19-desktop-surface-review/`](./audits/2026-07-19-desktop-surface-review/) ([English](./audits/2026-07-19-desktop-surface-review/README.en.md)) — mecanismo do `uwsm` que converte autostart `.desktop` em unit `systemd --user` sozinho (não documentado antes neste repo), `sshd-unix-local.socket` ativo apesar de `sshd.service` disabled, stack `xdg-desktop-portal` mascarado com trade-off explícito, processo órfão de root rastreado até a causa real via journal, e avaliação (não mitigação) do isolamento de GPU NVIDIA.
 
 ## Estudos de arquitetura
 
