@@ -99,6 +99,22 @@ This is the proprietary driver's out-of-the-box default on desktop Linux (no cus
 
 **Why it's not mitigated here**: `awk -F: '$3>=1000 && $3<60000'` against `/etc/passwd` confirms **exactly one login account** (`ecode`, already in the `video` group). With no second local account, there's no "other user" to isolate from — tightening to `660 root:video` via a custom udev rule wouldn't close any surface not already closed by the simple fact that only one account has a shell here. Recorded as a conscious decision, not an open item: if this machine ever gets a second login account, revisit this finding first.
 
+## Finding 9: eBPF LSM — only `net_guard`'s 2 hooks, no third-party program, no bpffs persistence
+
+Audited the kernel directly rather than trusting "`systemctl status` says only `net_guard` exists":
+
+```
+cat /sys/kernel/security/lsm                    # confirms 'bpf' is among the enabled LSMs
+bpftool prog list | grep '^\S*: lsm'             # filters to LSM-type programs only, whole kernel
+find /sys/fs/bpf -mindepth 1                     # objects pinned independent of any process
+```
+
+Result: exactly two `lsm` programs in the entire kernel — `restrict_filesystems` and `restrict_connect` — both `loaded_at` boot time (12:34:15), owned by `uid 0`, **no duplicates** (confirms the crash-loop documented in the [2026-07-17 audit](../2026-07-17-firewall-opensnitch-netguard/) is still resolved — a single load, not repeated ones from restarts). `find /sys/fs/bpf` empty: no program/map pinned surviving outside a process's normal lifecycle — the classic eBPF rootkit persistence trick (a pinned program stays active even after the loading process dies, with no PID to trace it to) ruled out.
+
+Extra corroboration, not just "it exists, so I trust it": the maps behind `restrict_connect` (`bpftool map show id <n>`) are `blocked_ips` (LPM trie, `max_entries 1024`) and `events` (ringbuf) — the `1024` matches exactly the capacity limit that caused the crash-loop documented in Finding 4 of the 2026-07-17 audit, and the ringbuf is the channel behind the `net_guard[492]: allow/deny ...` lines already seen in the journal. Not just "a program named net_guard exists" — its internals match what was already known about this specific tool.
+
+Side finding, not a problem: the one BPF program that looked odd at first glance (`cgroup_sysctl name sysctl_monitor`, `uid 977`) belongs to `systemd-networkd` itself (`getent passwd 977` → `systemd-network`), an internal feature of its own. The many `sd_fw_egress`/`sd_fw_ingress`/`sd_devices` (`cgroup_skb`/`cgroup_device`) entries are systemd creating one program per scope with `IPAddressAllow=`/`DeviceAllow=` — a fresh cluster per terminal/`sudo -i` session opened, normal behavior since systemd 235+.
+
 ## Reusable checklist (for the next audit of this kind)
 
 - [ ] `systemctl --user list-units 'app-*' --all` — any new/unknown `.desktop` in `/etc/xdg/autostart` or `~/.config/autostart` turned into a unit?
@@ -108,6 +124,8 @@ This is the proprietary driver's out-of-the-box default on desktop Linux (no cus
 - [ ] `resolvectl status` + `cat /etc/hosts` — DNS servers match the expected gateway, no new unintentional `/etc/hosts` entry
 - [ ] any `root`-owned process with an unexpected name in `ps aux` — before suspecting the worst, cross-check `journalctl --since/--until` at the exact `START` second to find the `comm=` of whoever activated it (don't trust `PPid` alone, which normally becomes `1` through ordinary reparenting)
 - [ ] `ls -la /dev/nvidia*` + `awk -F: '$3>=1000 && $3<60000' /etc/passwd` — if a second login account ever shows up, revisit Finding 8 (the `666` permission stops being harmless)
+- [ ] `bpftool prog list | grep '^\S*: lsm'` — only the expected hooks (today: `net_guard`'s `restrict_filesystems` + `restrict_connect`), no duplicate (crash-loop) and no third-party program
+- [ ] `find /sys/fs/bpf -mindepth 1` — empty, or only objects you recognize; something pinned with no traceable live process is a red flag
 
 ## Sources
 
@@ -116,3 +134,4 @@ This is the proprietary driver's out-of-the-box default on desktop Linux (no cus
 - [`man uwsm`](https://man.archlinux.org/man/uwsm.1) — `wayland-session-xdg-autostart@.target`, integration with `xdg-desktop-autostart.target`
 - [XDG Desktop Portal — official docs](https://flatpak.github.io/xdg-desktop-portal/docs/) — role of each backend (`-gtk`, `-hyprland`), sandbox-specific `xdg-document-portal`
 - [NVIDIA — Multi-Instance GPU / Compute Mode docs](https://docs.nvidia.com/deploy/mps/index.html) — isolation implications of `Default` vs `EXCLUSIVE_PROCESS`
+- [`bpftool-prog(8)`](https://man.archlinux.org/man/bpftool-prog.8) — listing and inspecting loaded BPF programs, including the `lsm` type

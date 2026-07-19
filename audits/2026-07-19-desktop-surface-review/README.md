@@ -99,6 +99,22 @@ Isso é o default de fábrica ([Compute Mode `Default` vs `Exclusive_Process`, d
 
 **Por que não mitigado aqui**: `awk -F: '$3>=1000 && $3<60000'` em `/etc/passwd` confirma **uma única conta de login** (`ecode`, já no grupo `video`). Sem segunda conta local, não existe "outro usuário" pra isolar de — apertar pra `660 root:video` via regra `udev` própria não fecharia superfície nenhuma que já não esteja fechada pelo simples fato de só existir um usuário com shell nesta máquina. Registrado como decisão consciente, não como pendência: se algum dia esta máquina ganhar uma segunda conta de login, revisitar este achado primeiro.
 
+## Achado 9: LSM eBPF — só os 2 hooks do `net_guard`, sem programa de terceiros, sem persistência via bpffs
+
+Auditoria direta do kernel, não confiando em "o `systemctl status` diz que só o `net_guard` existe":
+
+```
+cat /sys/kernel/security/lsm                    # confirma 'bpf' entre os LSMs habilitados
+bpftool prog list | grep '^\S*: lsm'             # filtra só programas tipo LSM, kernel inteiro
+find /sys/fs/bpf -mindepth 1                     # objetos pinados independentes de processo
+```
+
+Resultado: exatamente dois programas `lsm` no kernel inteiro — `restrict_filesystems` e `restrict_connect` — ambos `loaded_at` no horário de boot (12:34:15), dono `uid 0`, **sem duplicata** (confirma que o crash-loop documentado na [auditoria de 17/07](../2026-07-17-firewall-opensnitch-netguard/) continua resolvido — um load só, não vários por reinício). `find /sys/fs/bpf` vazio: nenhum programa/map pinado sobrevivendo fora do ciclo de vida normal do processo — técnica clássica de persistência de rootkit via eBPF (programa pinado continua ativo mesmo se o processo que carregou morrer, sem PID pra rastrear) descartada.
+
+Corroboração extra, não só "existe, então confio": os maps por trás de `restrict_connect` (`bpftool map show id <n>`) são `blocked_ips` (LPM trie, `max_entries 1024`) e `events` (ringbuf) — o `1024` bate exatamente com o limite de capacidade que causou o crash-loop documentado no Achado 4 da auditoria de 17/07, e o ringbuf é o canal por trás das linhas `net_guard[492]: allow/deny ...` já vistas no journal. Não é só "um programa chamado net_guard existe", é "os dados internos dele batem com o que já se sabia sobre essa ferramenta".
+
+Achado colateral, não é problema: o único programa BPF "estranho" à primeira vista (`cgroup_sysctl name sysctl_monitor`, `uid 977`) é do próprio `systemd-networkd` (`getent passwd 977` → `systemd-network`), feature interna dele. Os vários `sd_fw_egress`/`sd_fw_ingress`/`sd_devices` (`cgroup_skb`/`cgroup_device`) são o systemd criando um programa por scope com `IPAddressAllow=`/`DeviceAllow=` — um cluster novo por sessão de terminal/`sudo -i` aberta, comportamento normal desde systemd 235+.
+
 ## Checklist reutilizável (pra próxima auditoria deste tipo)
 
 - [ ] `systemctl --user list-units 'app-*' --all` — algum `.desktop` novo/desconhecido em `/etc/xdg/autostart` ou `~/.config/autostart` virou unit?
@@ -108,6 +124,8 @@ Isso é o default de fábrica ([Compute Mode `Default` vs `Exclusive_Process`, d
 - [ ] `resolvectl status` + `cat /etc/hosts` — DNS servers batem com o gateway esperado, sem entrada de `/etc/hosts` nova e não intencional
 - [ ] `ps aux` com qualquer processo `root` de nome inesperado — antes de suspeitar, cruzar `journalctl --since/--until` no segundo exato do `START` pra achar o `comm=` de quem ativou (não confiar só em `PPid`, que costuma virar `1` por reparenting normal)
 - [ ] `ls -la /dev/nvidia*` + `awk -F: '$3>=1000 && $3<60000' /etc/passwd` — se uma segunda conta de login aparecer, revisitar o Achado 8 (permissão `666` deixa de ser indiferente)
+- [ ] `bpftool prog list | grep '^\S*: lsm'` — só os hooks esperados (hoje: `restrict_filesystems` + `restrict_connect` do `net_guard`), sem duplicata (crash-loop) e sem programa de terceiros
+- [ ] `find /sys/fs/bpf -mindepth 1` — vazio, ou só objetos que você reconhece; algo pinado e não rastreável a um processo vivo é bandeira vermelha
 
 ## Fontes
 
@@ -116,3 +134,4 @@ Isso é o default de fábrica ([Compute Mode `Default` vs `Exclusive_Process`, d
 - [`man uwsm`](https://man.archlinux.org/man/uwsm.1) — `wayland-session-xdg-autostart@.target`, integração com `xdg-desktop-autostart.target`
 - [XDG Desktop Portal — documentação oficial](https://flatpak.github.io/xdg-desktop-portal/docs/) — papel de cada backend (`-gtk`, `-hyprland`), `xdg-document-portal` específico de sandbox
 - [NVIDIA — Multi-Instance GPU / Compute Mode docs](https://docs.nvidia.com/deploy/mps/index.html) — implicações de isolamento do modo `Default` vs `EXCLUSIVE_PROCESS`
+- [`bpftool-prog(8)`](https://man.archlinux.org/man/bpftool-prog.8) — listagem e inspeção de programas BPF carregados, incluindo tipo `lsm`
