@@ -115,6 +115,32 @@ Extra corroboration, not just "it exists, so I trust it": the maps behind `restr
 
 Side finding, not a problem: the one BPF program that looked odd at first glance (`cgroup_sysctl name sysctl_monitor`, `uid 977`) belongs to `systemd-networkd` itself (`getent passwd 977` → `systemd-network`), an internal feature of its own. The many `sd_fw_egress`/`sd_fw_ingress`/`sd_devices` (`cgroup_skb`/`cgroup_device`) entries are systemd creating one program per scope with `IPAddressAllow=`/`DeviceAllow=` — a fresh cluster per terminal/`sudo -i` session opened, normal behavior since systemd 235+.
 
+## Finding 10: final post-mitigation verification — nothing new, no hiding technique found
+
+After applying every mitigation above (Findings 1, 2, 7), a targeted re-audit to confirm nothing got left behind or reappeared — mitigating once isn't enough, it's worth re-checking with the system already in its final state:
+
+```
+find /sys/fs/bpf -mindepth 1                                  # bpffs: still empty
+bpftool prog list | grep -c '^[0-9]*:'                        # total BPF program count stable (48)
+bpftool prog list | grep '^\S*: lsm'                           # still only net_guard's 2
+```
+
+Two new checks, not covered by earlier findings — classic techniques for hiding a malicious process worth running any time you audit a machine already in use, not only right after a specific mitigation:
+
+```
+# process running from a typical malware drop location (payload from a script/download)
+for p in /proc/[0-9]*; do
+  readlink "$p/exe" 2>/dev/null | grep -qE '^/(tmp|dev/shm|var/tmp)/' && echo "$p"
+done
+
+# binary deleted from disk but still running in memory (hides from "ls", not from /proc)
+for p in /proc/[0-9]*; do
+  readlink "$p/exe" 2>/dev/null | grep -q '(deleted)' && echo "$p"
+done
+```
+
+Both empty. A final pass over `ps -eo ... | grep -v <known kernel daemons>` also turned up no `root` process outside what earlier findings had already mapped (same PIDs for `net_guard`, `opensnitchd`, `fail2ban`, `ly-dm`, the already-identified `sudo -i` sessions). Audit closed with no open item.
+
 ## Reusable checklist (for the next audit of this kind)
 
 - [ ] `systemctl --user list-units 'app-*' --all` — any new/unknown `.desktop` in `/etc/xdg/autostart` or `~/.config/autostart` turned into a unit?
@@ -126,6 +152,8 @@ Side finding, not a problem: the one BPF program that looked odd at first glance
 - [ ] `ls -la /dev/nvidia*` + `awk -F: '$3>=1000 && $3<60000' /etc/passwd` — if a second login account ever shows up, revisit Finding 8 (the `666` permission stops being harmless)
 - [ ] `bpftool prog list | grep '^\S*: lsm'` — only the expected hooks (today: `net_guard`'s `restrict_filesystems` + `restrict_connect`), no duplicate (crash-loop) and no third-party program
 - [ ] `find /sys/fs/bpf -mindepth 1` — empty, or only objects you recognize; something pinned with no traceable live process is a red flag
+- [ ] process running from `/tmp`, `/dev/shm`, or `/var/tmp` (`readlink /proc/<pid>/exe`) — typical drop location for a script/download payload
+- [ ] binary deleted from disk but still running in memory (`readlink /proc/<pid>/exe` ends in `(deleted)`) — hides from `ls`, not from `/proc`
 
 ## Sources
 
