@@ -141,6 +141,20 @@ done
 
 Both empty. A final pass over `ps -eo ... | grep -v <known kernel daemons>` also turned up no `root` process outside what earlier findings had already mapped (same PIDs for `net_guard`, `opensnitchd`, `fail2ban`, `ly-dm`, the already-identified `sudo -i` sessions). Audit closed with no open item.
 
+**Re-verification on 2026-07-22, after system updates.** The question that prompted this: a systemd unit mask isn't guaranteed permanent — a package update can reinstall/re-enable the unit and silently undo the mask. Ran the full checklist again:
+
+```
+systemctl is-enabled sshd.service sshd@.service sshdgenkeys.service ssh-access.target sshd-unix-local.socket
+systemctl --user is-enabled xdg-desktop-autostart.target xdg-document-portal.service \
+    xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-hyprland.service xdg-permission-store.service
+systemctl --user list-units 'app-*' --all
+ss -tulnp
+sudo bpftool prog list | grep -E '^\S*: lsm'
+sudo find /sys/fs/bpf -mindepth 1
+```
+
+Result: the whole `sshd` family and the portal stack are still `masked`; `xdg-desktop-autostart.target` too — no `app-picom`, `app-gnome-keyring-pkcs11`, `app-cachyos-hello`, or `app-remmina-applet` reappeared among the `app-*` units (that's the tell that would show up if an update had undone the mask). Ports: only the `resolved` stubs plus Firefox's ephemeral traffic, nothing new. eBPF LSM: still exactly `restrict_filesystems` + `restrict_connect`, no duplicate. `/sys/fs/bpf`: empty. No orphaned/unexpected `root` process, nothing executing from `/tmp`/`/dev/shm`/`/var/tmp`, no deleted-but-running binary, still a single login account. Conclusion: the system updates did not reopen any of the mitigations — no privilege-escalation or arbitrary-command-execution vector via systemd was reintroduced.
+
 ## Reusable checklist (for the next audit of this kind)
 
 - [ ] `systemctl --user list-units 'app-*' --all` — any new/unknown `.desktop` in `/etc/xdg/autostart` or `~/.config/autostart` turned into a unit?

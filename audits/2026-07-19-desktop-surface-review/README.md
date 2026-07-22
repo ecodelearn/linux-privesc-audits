@@ -141,6 +141,20 @@ done
 
 Ambas vazias. Revisão final de todo `ps -eo ... | grep -v <daemons de kernel conhecidos>` também não trouxe nenhum processo `root` fora do que já estava mapeado nos achados anteriores (mesmos PIDs de `net_guard`, `opensnitchd`, `fail2ban`, `ly-dm`, sessões `sudo -i` já identificadas). Auditoria fechada sem pendência.
 
+**Reverificação em 2026-07-22, pós-atualizações do sistema.** Pergunta que motivou: mask de unit systemd não é garantidamente permanente — uma atualização de pacote pode reinstalar/reabilitar a unit e desfazer o mask silenciosamente. Rodado o checklist completo de novo:
+
+```
+systemctl is-enabled sshd.service sshd@.service sshdgenkeys.service ssh-access.target sshd-unix-local.socket
+systemctl --user is-enabled xdg-desktop-autostart.target xdg-document-portal.service \
+    xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-hyprland.service xdg-permission-store.service
+systemctl --user list-units 'app-*' --all
+ss -tulnp
+sudo bpftool prog list | grep -E '^\S*: lsm'
+sudo find /sys/fs/bpf -mindepth 1
+```
+
+Resultado: toda a família `sshd` e o stack de portals continuam `masked`; `xdg-desktop-autostart.target` idem — nenhum `app-picom`, `app-gnome-keyring-pkcs11`, `app-cachyos-hello` ou `app-remmina-applet` reapareceu entre as `app-*` units (é o sinal que apareceria se o mask tivesse sido desfeito por uma atualização). Portas: só os stubs do `resolved` + tráfego ephemeral do Firefox, nada novo. LSM eBPF: ainda exatamente `restrict_filesystems` + `restrict_connect`, sem duplicata. `/sys/fs/bpf`: vazio. Nenhum processo `root` órfão/inesperado, nenhum executável rodando de `/tmp`/`/dev/shm`/`/var/tmp`, nenhum binário deletado ainda em memória, uma única conta de login confirmada de novo. Conclusão: as atualizações de sistema não reabriram nenhuma das mitigações — nenhum vetor de escalonamento de privilégio ou execução arbitrária via systemd foi reintroduzido.
+
 ## Checklist reutilizável (pra próxima auditoria deste tipo)
 
 - [ ] `systemctl --user list-units 'app-*' --all` — algum `.desktop` novo/desconhecido em `/etc/xdg/autostart` ou `~/.config/autostart` virou unit?
